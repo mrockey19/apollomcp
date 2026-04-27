@@ -1,13 +1,13 @@
+import logging
 import os
 
 import structlog
-from structlog._log_levels import NAME_TO_LEVEL
 
 
 def setup_logging() -> None:
     """Configure structlog with JSON rendering for Lambda/CloudWatch."""
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
-    level_num = NAME_TO_LEVEL.get(log_level.lower(), 20)  # default INFO=20
+    level_num = logging.getLevelNamesMapping().get(log_level, logging.INFO)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

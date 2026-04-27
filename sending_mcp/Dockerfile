@@ -11,7 +11,6 @@ COPY --from=adapter /lambda-adapter /opt/extensions/lambda-adapter
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8080 \
-    AWS_LAMBDA_EXEC_WRAPPER=/opt/extensions/lambda-adapter \
     AWS_LWA_INVOKE_MODE=response_stream \
     AWS_LWA_READINESS_CHECK_PATH=/mcp
 
