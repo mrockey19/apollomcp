@@ -1,0 +1,10 @@
+.env
+.venv
+.aws-sam
+__pycache__
+*.pyc
+.mypy_cache
+.pytest_cache
+.ruff_cache
+dist/
+*.egg-info/

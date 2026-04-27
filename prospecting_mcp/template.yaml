@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Apollo Prospecting MCP
+
+Parameters:
+  ApolloApiKeySecretArn:
+    Type: String
+  McpSharedSecretArn:
+    Type: String
+  ImageUri:
+    Type: String
+
+Resources:
+  ProspectingMcpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: apollo-prospecting-mcp
+      PackageType: Image
+      ImageUri: !Ref ImageUri
+      Architectures: [arm64]
+      MemorySize: 1024
+      Timeout: 60
+      Environment:
+        Variables:
+          APOLLO_BASE_URL: https://api.apollo.io/api/v1
+          AWS_LWA_INVOKE_MODE: response_stream
+          LOG_LEVEL: INFO
+          APOLLO_API_KEY: !Sub '{{resolve:secretsmanager:${ApolloApiKeySecretArn}}}'
+          MCP_SHARED_SECRET: !Sub '{{resolve:secretsmanager:${McpSharedSecretArn}}}'
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Ref ApolloApiKeySecretArn
+                - !Ref McpSharedSecretArn
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins: ['*']
+          AllowHeaders: ['*']
+          AllowMethods: ['*']
+
+Outputs:
+  FunctionUrl:
+    Value: !GetAtt ProspectingMcpFunctionUrl.FunctionUrl
+  FunctionArn:
+    Value: !GetAtt ProspectingMcpFunction.Arn
