@@ -5,15 +5,14 @@ from datetime import datetime
 from typing import Literal
 
 from fastmcp import FastMCP
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr
+
 from shared.apollo_client import ApolloClient
 from shared.logging import setup_logging
 
 setup_logging()
 
 mcp = FastMCP("apollo-sending")
-
-# ── Models ──
 
 
 class SendResult(BaseModel):
@@ -24,10 +23,7 @@ class SendResult(BaseModel):
         "enrolled_active", "enrolled_paused_until", "skipped_already_in_sequence"
     ]
     scheduled_for: datetime | None = None
-    apollo_warnings: list[str] = []
 
-
-# ── Shared client instance ──
 
 _apollo: ApolloClient | None = None
 
@@ -37,9 +33,6 @@ def _get_apollo() -> ApolloClient:
     if _apollo is None:
         _apollo = ApolloClient()
     return _apollo
-
-
-# ── Tools ──
 
 
 @mcp.tool
@@ -59,12 +52,11 @@ async def send_personalized_email(
     Apollo handles deliverability, reply detection, unsubscribes.
 
     Returns a SendResult with the actual enrollment status. If the contact is already
-    in the sequence, returns status='skipped_already_in_sequence' and does NOT re-enroll
-    (Apollo's default — override is intentionally not exposed here).
+    in the sequence, returns status='skipped_already_in_sequence' and does NOT re-enroll.
     """
     apollo = _get_apollo()
+    email = str(contact_email).lower()
 
-    # 1. Resolve sequence
     sequences = await apollo.search_sequences(q_name=sequence_name)
     seq = next((s for s in sequences if s.name == sequence_name), None)
     if not seq:
@@ -72,9 +64,7 @@ async def send_personalized_email(
             f"Sequence '{sequence_name}' not found. "
             "Build it in Apollo UI per docs/shell-sequence-setup.md"
         )
-    sequence_id = seq.id
 
-    # 2. Resolve mailbox
     accounts = await apollo.list_email_accounts()
     active_accounts = [a for a in accounts if a.active]
     if not active_accounts:
@@ -91,76 +81,59 @@ async def send_personalized_email(
             )
     else:
         mailbox = active_accounts[0]
-    mailbox_id = mailbox.id
 
-    # 3. Resolve contact
-    contacts = await apollo.search_contacts(q_keywords=str(contact_email))
+    contacts = await apollo.search_contacts(q_keywords=email)
     contact = next(
-        (c for c in contacts if c.email and c.email.lower() == str(contact_email).lower()),
+        (c for c in contacts if c.email and c.email.lower() == email),
         None,
     )
 
     if not contact and create_if_missing:
-        contact = await apollo.create_contact(email=str(contact_email))
+        contact = await apollo.create_contact(email=email)
     elif not contact:
         raise ValueError(
-            f"Contact '{contact_email}' not found and create_if_missing=False."
+            f"Contact '{email}' not found and create_if_missing=False."
         )
 
-    contact_id = contact.id
-
-    # 4. Update custom fields
     await apollo.update_contact(
-        contact_id,
+        contact.id,
         typed_custom_fields={
             "ai_email_subject": subject,
             "ai_email_body": body,
         },
     )
 
-    # 5. Enroll in sequence
-    warnings: list[str] = []
     try:
         result = await apollo.add_to_sequence(
-            sequence_id=sequence_id,
-            contact_ids=[contact_id],
-            send_email_from_email_account_id=mailbox_id,
-            sequence_active_in_other_campaigns=False,
-            sequence_unverified_email=False,
+            sequence_id=seq.id,
+            contact_ids=[contact.id],
+            send_email_from_email_account_id=mailbox.id,
+            sequence_state="paused" if schedule_at else "active",
+            auto_unpause_at=schedule_at.isoformat() if schedule_at else None,
         )
-        # Check for already-enrolled
-        if result.get("contacts", []) == [] and result.get("already_in_sequence"):
+        if not result.get("contacts") and result.get("already_in_sequence"):
             return SendResult(
-                contact_id=contact_id,
-                sequence_id=sequence_id,
-                mailbox_id=mailbox_id,
+                contact_id=contact.id,
+                sequence_id=seq.id,
+                mailbox_id=mailbox.id,
                 status="skipped_already_in_sequence",
             )
     except Exception as e:
         if "already" in str(e).lower():
             return SendResult(
-                contact_id=contact_id,
-                sequence_id=sequence_id,
-                mailbox_id=mailbox_id,
+                contact_id=contact.id,
+                sequence_id=seq.id,
+                mailbox_id=mailbox.id,
                 status="skipped_already_in_sequence",
             )
         raise
 
-    status: Literal[
-        "enrolled_active", "enrolled_paused_until", "skipped_already_in_sequence"
-    ]
-    if schedule_at:
-        status = "enrolled_paused_until"
-    else:
-        status = "enrolled_active"
-
     return SendResult(
-        contact_id=contact_id,
-        sequence_id=sequence_id,
-        mailbox_id=mailbox_id,
-        status=status,
+        contact_id=contact.id,
+        sequence_id=seq.id,
+        mailbox_id=mailbox.id,
+        status="enrolled_paused_until" if schedule_at else "enrolled_active",
         scheduled_for=schedule_at,
-        apollo_warnings=warnings,
     )
 
 
@@ -171,17 +144,16 @@ async def get_send_status(
 ) -> dict:
     """Check whether the contact has been sent the email yet, opened it, replied, etc."""
     apollo = _get_apollo()
+    email = str(contact_email).lower()
 
-    # Find the contact
-    contacts = await apollo.search_contacts(q_keywords=str(contact_email))
+    contacts = await apollo.search_contacts(q_keywords=email)
     contact = next(
-        (c for c in contacts if c.email and c.email.lower() == str(contact_email).lower()),
+        (c for c in contacts if c.email and c.email.lower() == email),
         None,
     )
     if not contact:
         return {"error": f"Contact '{contact_email}' not found."}
 
-    # Find the sequence
     sequences = await apollo.search_sequences(q_name=sequence_name)
     seq = next((s for s in sequences if s.name == sequence_name), None)
     if not seq:
@@ -199,13 +171,8 @@ async def get_send_status(
 @mcp.tool
 async def list_active_mailboxes() -> list[dict]:
     """List the mailboxes the agent can pick from for the mailbox_email parameter."""
-    apollo = _get_apollo()
-    accounts = await apollo.list_email_accounts()
-    return [
-        a.model_dump()
-        for a in accounts
-        if a.active
-    ]
+    accounts = await _get_apollo().list_email_accounts()
+    return [a.model_dump() for a in accounts if a.active]
 
 
 if __name__ == "__main__":

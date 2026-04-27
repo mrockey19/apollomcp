@@ -3,6 +3,11 @@ set -euo pipefail
 
 REGION=${AWS_REGION:-us-east-1}
 
+if [ -z "${APOLLO_API_KEY:-}" ]; then
+  echo "ERROR: APOLLO_API_KEY is not set. Export it before running bootstrap.sh." >&2
+  exit 1
+fi
+
 # 1. Secrets
 aws secretsmanager create-secret \
   --name apollo/api-key \

@@ -360,17 +360,23 @@ class ApolloClient:
         send_email_from_email_account_id: str,
         sequence_active_in_other_campaigns: bool = False,
         sequence_unverified_email: bool = False,
+        sequence_state: str = "active",
+        auto_unpause_at: str | None = None,
     ) -> dict[str, Any]:
         """POST /emailer_campaigns/{id}/add_contact_ids."""
+        payload: dict[str, Any] = {
+            "contact_ids": contact_ids,
+            "emailer_campaign_id": sequence_id,
+            "send_email_from_email_account_id": send_email_from_email_account_id,
+            "sequence_active_in_other_campaigns": sequence_active_in_other_campaigns,
+            "sequence_unverified_email": sequence_unverified_email,
+            "sequence_state": sequence_state,
+        }
+        if auto_unpause_at:
+            payload["auto_unpause_at"] = auto_unpause_at
         return await self._post(
             f"/emailer_campaigns/{sequence_id}/add_contact_ids",
-            json={
-                "contact_ids": contact_ids,
-                "emailer_campaign_id": sequence_id,
-                "send_email_from_email_account_id": send_email_from_email_account_id,
-                "sequence_active_in_other_campaigns": sequence_active_in_other_campaigns,
-                "sequence_unverified_email": sequence_unverified_email,
-            },
+            json=payload,
         )
 
     async def list_custom_fields(self) -> list[dict[str, Any]]:

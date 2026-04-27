@@ -5,14 +5,14 @@ from typing import Literal
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
+
 from shared.apollo_client import ApolloClient
 from shared.logging import setup_logging
+from shared.models import EnrichedPerson, PersonSummary
 
 setup_logging()
 
 mcp = FastMCP("apollo-prospecting")
-
-# ── Models ──
 
 
 class PersonFilter(BaseModel):
@@ -58,26 +58,6 @@ class CompanyFilter(BaseModel):
     per_page: int = 25
 
 
-class PersonSummary(BaseModel):
-    id: str
-    name: str
-    title: str | None = None
-    company: str | None = None
-    company_domain: str | None = None
-    linkedin_url: str | None = None
-    location: str | None = None
-
-
-class EnrichedPerson(PersonSummary):
-    email: str | None = None
-    email_status: (
-        Literal["verified", "unverified", "likely_to_engage", "unavailable"] | None
-    ) = None
-    phone: str | None = None
-
-
-# ── Shared client instance ──
-
 _apollo: ApolloClient | None = None
 
 
@@ -88,9 +68,6 @@ def _get_apollo() -> ApolloClient:
     return _apollo
 
 
-# ── Tools ──
-
-
 @mcp.tool
 async def search_people(filters: PersonFilter) -> list[PersonSummary]:
     """Find prospects in Apollo's database matching the given filters.
@@ -98,13 +75,12 @@ async def search_people(filters: PersonFilter) -> list[PersonSummary]:
     Does NOT return emails. Call enrich_people to reveal emails for the IDs you care about.
     Costs no Apollo credits. Capped at 50,000 records per filter combination.
     """
-    apollo = _get_apollo()
-    results, _ = await apollo.search_people(
+    results, _ = await _get_apollo().search_people(
         filters=filters.model_dump(exclude_none=True),
         page=filters.page,
         per_page=filters.per_page,
     )
-    return [PersonSummary.model_validate(r.model_dump()) for r in results]
+    return results
 
 
 @mcp.tool
@@ -114,8 +90,7 @@ async def search_companies(filters: CompanyFilter) -> list[dict]:
     Returns company id, name, domain, industry, headcount range, revenue range, tech stack.
     Consumes Apollo credits.
     """
-    apollo = _get_apollo()
-    results, _ = await apollo.search_companies(
+    results, _ = await _get_apollo().search_companies(
         filters=filters.model_dump(exclude_none=True),
         page=filters.page,
         per_page=filters.per_page,
@@ -137,11 +112,11 @@ async def find_people_at_companies(
     companies, _ = await apollo.search_companies(
         filters=company_filters.model_dump(exclude_none=True),
         page=1,
-        per_page=min(max_companies, 25),
+        per_page=min(max_companies, 100),
     )
 
     all_people: list[PersonSummary] = []
-    for company in companies[:max_companies]:
+    for company in companies:
         person_dict = person_filters.model_dump(exclude_none=True)
         person_dict["organization_ids"] = [company.id]
         results, _ = await apollo.search_people(
@@ -149,9 +124,7 @@ async def find_people_at_companies(
             page=1,
             per_page=max_people_per_company,
         )
-        all_people.extend(
-            PersonSummary.model_validate(r.model_dump()) for r in results
-        )
+        all_people.extend(results)
 
     return all_people
 
@@ -168,28 +141,24 @@ async def enrich_people(
         raise ValueError(
             "Apollo's bulk enrichment caps at 10 IDs per call. Chunk in the agent."
         )
-    apollo = _get_apollo()
-    results = await apollo.enrich_people(
+    return await _get_apollo().enrich_people(
         person_ids=person_ids,
         reveal_personal_emails=reveal_emails,
         reveal_phone_number=reveal_phones,
     )
-    return [EnrichedPerson.model_validate(r.model_dump()) for r in results]
 
 
 @mcp.tool
 async def enrich_company(domain: str) -> dict:
     """Enrich a single company by domain. Returns full firmographic profile."""
-    apollo = _get_apollo()
-    result = await apollo.enrich_company(domain=domain)
+    result = await _get_apollo().enrich_company(domain=domain)
     return result.model_dump()
 
 
 @mcp.tool
 async def get_company_job_postings(organization_id: str) -> list[dict]:
     """Active job postings at a company. Useful as a buying-intent signal."""
-    apollo = _get_apollo()
-    return await apollo.get_job_postings(organization_id)
+    return await _get_apollo().get_job_postings(organization_id)
 
 
 if __name__ == "__main__":
