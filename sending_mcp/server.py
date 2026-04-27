@@ -6,10 +6,7 @@ from typing import Literal
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, EmailStr, Field
-from starlette.middleware import Middleware
-
 from shared.apollo_client import ApolloClient
-from shared.auth import McpAuthMiddleware
 from shared.logging import setup_logging
 
 setup_logging()
@@ -217,5 +214,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8080")),
         stateless_http=True,
-        middleware=[Middleware(McpAuthMiddleware)],
     )
