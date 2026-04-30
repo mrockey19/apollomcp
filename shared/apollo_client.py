@@ -383,3 +383,85 @@ class ApolloClient:
         """GET /typed_custom_fields — list custom fields."""
         data = await self._get("/typed_custom_fields")
         return data.get("typed_custom_fields", [])  # type: ignore[no-any-return]
+
+    async def search_contacts_filtered(
+        self,
+        sequence_id: str | None = None,
+        last_contacted_after: str | None = None,
+        last_contacted_before: str | None = None,
+        page: int = 1,
+        per_page: int = 25,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """POST /contacts/search with filters for sequence and last-contacted date."""
+        payload: dict[str, Any] = {
+            "page": page,
+            "per_page": per_page,
+            "sort_by_field": "contact_last_activity_date",
+            "sort_ascending": False,
+        }
+        if sequence_id:
+            payload["emailer_campaign_ids"] = [sequence_id]
+        if last_contacted_after or last_contacted_before:
+            date_range: dict[str, str] = {}
+            if last_contacted_after:
+                date_range["min"] = last_contacted_after
+            if last_contacted_before:
+                date_range["max"] = last_contacted_before
+            payload["contact_last_activity_date_range"] = date_range
+
+        data = await self._post("/contacts/search", json=payload)
+        contacts = data.get("contacts", [])
+        total = data.get("pagination", {}).get("total_entries", 0)
+        results = [
+            {
+                "id": c.get("id"),
+                "email": c.get("email"),
+                "first_name": c.get("first_name"),
+                "last_name": c.get("last_name"),
+                "name": f"{c.get('first_name', '')} {c.get('last_name', '')}".strip(),
+                "title": c.get("title"),
+                "company": c.get("organization_name"),
+                "last_activity_date": c.get("contact_last_activity_date"),
+                "emailer_campaign_ids": c.get("emailer_campaign_ids", []),
+            }
+            for c in contacts
+        ]
+        return results, total
+
+    async def get_emailer_messages(
+        self,
+        contact_id: str,
+        emailer_campaign_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """POST /emailer_messages/search — get email messages for a contact."""
+        payload: dict[str, Any] = {
+            "contact_id": contact_id,
+            "page": 1,
+            "per_page": 50,
+        }
+        if emailer_campaign_id:
+            payload["emailer_campaign_id"] = emailer_campaign_id
+        data = await self._post("/emailer_messages/search", json=payload)
+        messages = data.get("emailer_messages", [])
+        return [
+            {
+                "id": m.get("id"),
+                "subject": m.get("subject"),
+                "body_text": m.get("body_text"),
+                "body_html": m.get("body_html"),
+                "sent_at": m.get("sent_at"),
+                "opened_at": m.get("opened_at"),
+                "replied_at": m.get("replied_at"),
+                "reply_body": m.get("reply_message", {}).get("body")
+                if m.get("reply_message")
+                else None,
+                "reply_subject": m.get("reply_message", {}).get("subject")
+                if m.get("reply_message")
+                else None,
+                "reply_received_at": m.get("reply_message", {}).get("created_at")
+                if m.get("reply_message")
+                else None,
+                "status": m.get("status"),
+            }
+            for m in messages
+        ]  # type: ignore[no-any-return]

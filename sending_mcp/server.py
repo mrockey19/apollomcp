@@ -169,6 +169,62 @@ async def get_send_status(
 
 
 @mcp.tool
+async def get_replies(
+    contact_email: EmailStr,
+    sequence_name: str | None = None,
+) -> list[dict]:
+    """Get reply content for emails sent to a contact.
+
+    Returns the full reply body, subject, and timestamp — not just a boolean.
+    Use this to read what a prospect actually said so follow-ups can be context-aware.
+
+    Args:
+        contact_email: The prospect's email address.
+        sequence_name: Optional — filter to replies from a specific sequence.
+    """
+    apollo = _get_apollo()
+
+    contacts = await apollo.search_contacts(q_keywords=str(contact_email))
+    contact = next(
+        (c for c in contacts if c.email and c.email.lower() == str(contact_email).lower()),
+        None,
+    )
+    if not contact:
+        return [{"error": f"Contact '{contact_email}' not found."}]
+
+    sequence_id: str | None = None
+    if sequence_name:
+        sequences = await apollo.search_sequences(q_name=sequence_name)
+        seq = next((s for s in sequences if s.name == sequence_name), None)
+        if seq:
+            sequence_id = seq.id
+
+    messages = await apollo.get_emailer_messages(
+        contact_id=contact.id,
+        emailer_campaign_id=sequence_id,
+    )
+
+    # Filter to only messages that have replies
+    replies = [
+        {
+            "contact_email": str(contact_email),
+            "original_subject": m.get("subject"),
+            "sent_at": m.get("sent_at"),
+            "reply_subject": m.get("reply_subject"),
+            "reply_body": m.get("reply_body"),
+            "reply_received_at": m.get("reply_received_at"),
+        }
+        for m in messages
+        if m.get("reply_body")
+    ]
+
+    if not replies:
+        return [{"info": f"No replies found from {contact_email}.", "messages_checked": len(messages)}]
+
+    return replies
+
+
+@mcp.tool
 async def list_active_mailboxes() -> list[dict]:
     """List the mailboxes the agent can pick from for the mailbox_email parameter."""
     accounts = await _get_apollo().list_email_accounts()

@@ -14,6 +14,7 @@ from prospecting_mcp.server import (
     enrich_people,
     get_company_job_postings,
     find_people_at_companies,
+    list_contacts,
     search_companies,
     search_people,
 )
@@ -68,6 +69,27 @@ def _mock_apollo() -> AsyncMock:
     mock.get_job_postings.return_value = [
         {"title": "Senior Engineer", "url": "https://jobs.acme.com/1"}
     ]
+    mock.search_sequences.return_value = [
+        __import__("shared.models", fromlist=["Sequence"]).Sequence(
+            id="seq1", name="AI Bespoke Send", active=True, num_steps=1
+        )
+    ]
+    mock.search_contacts_filtered.return_value = (
+        [
+            {
+                "id": "c1",
+                "email": "jane@acme.com",
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "name": "Jane Doe",
+                "title": "VP Sales",
+                "company": "Acme Corp",
+                "last_activity_date": "2026-04-01T12:00:00Z",
+                "emailer_campaign_ids": ["seq1"],
+            }
+        ],
+        1,
+    )
     return mock
 
 
@@ -127,3 +149,31 @@ async def test_get_company_job_postings(_patch_apollo: AsyncMock) -> None:
     results = await get_company_job_postings(organization_id="o1")
     assert len(results) == 1
     assert results[0]["title"] == "Senior Engineer"
+
+
+async def test_list_contacts_by_sequence(_patch_apollo: AsyncMock) -> None:
+    result = await list_contacts(sequence_name="AI Bespoke Send")
+    assert result["total"] == 1
+    assert len(result["contacts"]) == 1
+    assert result["contacts"][0]["email"] == "jane@acme.com"
+    _patch_apollo.search_sequences.assert_called_once()
+    _patch_apollo.search_contacts_filtered.assert_called_once()
+
+
+async def test_list_contacts_by_date(_patch_apollo: AsyncMock) -> None:
+    result = await list_contacts(last_contacted_after="2026-01-01")
+    assert result["total"] == 1
+    _patch_apollo.search_contacts_filtered.assert_called_once_with(
+        sequence_id=None,
+        last_contacted_after="2026-01-01",
+        last_contacted_before=None,
+        page=1,
+        per_page=25,
+    )
+
+
+async def test_list_contacts_sequence_not_found(_patch_apollo: AsyncMock) -> None:
+    _patch_apollo.search_sequences.return_value = []
+    result = await list_contacts(sequence_name="Nonexistent")
+    assert "error" in result
+    assert result["total"] == 0

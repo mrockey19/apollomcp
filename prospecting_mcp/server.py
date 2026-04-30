@@ -161,6 +161,46 @@ async def get_company_job_postings(organization_id: str) -> list[dict]:
     return await _get_apollo().get_job_postings(organization_id)
 
 
+@mcp.tool
+async def list_contacts(
+    sequence_name: str | None = None,
+    last_contacted_after: str | None = None,
+    last_contacted_before: str | None = None,
+    page: int = 1,
+    per_page: int = 25,
+) -> dict:
+    """List contacts in your Apollo CRM, filtered by sequence and/or last-contacted date.
+
+    Use this to dedupe before prospecting — check who you've already contacted
+    in a given sequence or time window. Prevents "oops, I already pitched this person."
+
+    Args:
+        sequence_name: Filter to contacts enrolled in this sequence (exact name match).
+        last_contacted_after: ISO 8601 date (e.g. '2026-01-01'). Only contacts with activity after this date.
+        last_contacted_before: ISO 8601 date. Only contacts with activity before this date.
+        page: Page number (default 1).
+        per_page: Results per page (default 25, max 100).
+    """
+    apollo = _get_apollo()
+
+    sequence_id: str | None = None
+    if sequence_name:
+        sequences = await apollo.search_sequences(q_name=sequence_name)
+        seq = next((s for s in sequences if s.name == sequence_name), None)
+        if not seq:
+            return {"error": f"Sequence '{sequence_name}' not found.", "contacts": [], "total": 0}
+        sequence_id = seq.id
+
+    contacts, total = await apollo.search_contacts_filtered(
+        sequence_id=sequence_id,
+        last_contacted_after=last_contacted_after,
+        last_contacted_before=last_contacted_before,
+        page=page,
+        per_page=per_page,
+    )
+    return {"contacts": contacts, "total": total, "page": page}
+
+
 if __name__ == "__main__":
     mcp.run(
         transport="streamable-http",

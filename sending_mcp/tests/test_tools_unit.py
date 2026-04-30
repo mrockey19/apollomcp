@@ -7,6 +7,7 @@ import pytest
 from shared.models import Contact, EmailAccount, Sequence
 
 from sending_mcp.server import (
+    get_replies,
     get_send_status,
     list_active_mailboxes,
     send_personalized_email,
@@ -44,6 +45,32 @@ def _mock_apollo() -> AsyncMock:
     mock.create_contact.return_value = Contact(
         id="c_new", email="new@example.com", first_name="New"
     )
+    mock.get_emailer_messages.return_value = [
+        {
+            "id": "msg1",
+            "subject": "Quick test from the MCP",
+            "body_text": "This is the body.",
+            "sent_at": "2026-04-25T10:00:00Z",
+            "opened_at": "2026-04-25T11:00:00Z",
+            "replied_at": "2026-04-25T12:00:00Z",
+            "reply_body": "Thanks for reaching out! Let's chat next week.",
+            "reply_subject": "Re: Quick test from the MCP",
+            "reply_received_at": "2026-04-25T12:00:00Z",
+            "status": "replied",
+        },
+        {
+            "id": "msg2",
+            "subject": "Follow up",
+            "body_text": "Just checking in.",
+            "sent_at": "2026-04-26T10:00:00Z",
+            "opened_at": None,
+            "replied_at": None,
+            "reply_body": None,
+            "reply_subject": None,
+            "reply_received_at": None,
+            "status": "sent",
+        },
+    ]
     return mock
 
 
@@ -131,6 +158,35 @@ async def test_get_send_status_contact_not_found(_patch_apollo: AsyncMock) -> No
     _patch_apollo.search_contacts.return_value = []
     result = await get_send_status(contact_email="missing@example.com")
     assert "error" in result
+
+
+async def test_get_replies_with_reply(_patch_apollo: AsyncMock) -> None:
+    results = await get_replies(contact_email="jane@acme.com")
+    assert len(results) == 1
+    assert results[0]["reply_body"] == "Thanks for reaching out! Let's chat next week."
+    assert results[0]["original_subject"] == "Quick test from the MCP"
+
+
+async def test_get_replies_no_replies(_patch_apollo: AsyncMock) -> None:
+    _patch_apollo.get_emailer_messages.return_value = [
+        {
+            "id": "msg2",
+            "subject": "Follow up",
+            "sent_at": "2026-04-26T10:00:00Z",
+            "reply_body": None,
+            "status": "sent",
+        },
+    ]
+    results = await get_replies(contact_email="jane@acme.com")
+    assert len(results) == 1
+    assert "info" in results[0]
+    assert results[0]["messages_checked"] == 1
+
+
+async def test_get_replies_contact_not_found(_patch_apollo: AsyncMock) -> None:
+    _patch_apollo.search_contacts.return_value = []
+    results = await get_replies(contact_email="missing@example.com")
+    assert "error" in results[0]
 
 
 async def test_list_active_mailboxes(_patch_apollo: AsyncMock) -> None:
