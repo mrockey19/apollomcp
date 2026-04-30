@@ -58,6 +58,7 @@ class ApolloClient:
             or os.environ.get("APOLLO_BASE_URL", "https://api.apollo.io/api/v1")
         )
         self._client: httpx.AsyncClient | None = None
+        self._field_name_to_id: dict[str, str] | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -304,13 +305,49 @@ class ApolloClient:
             company=c.get("organization_name"),
         )
 
+    async def _resolve_field_ids(
+        self, fields_by_name: dict[str, str]
+    ) -> dict[str, str]:
+        """Map custom field names to their Apollo field IDs.
+
+        Apollo's typed_custom_fields payload requires field IDs as keys,
+        not human-readable names. This fetches the field metadata once
+        and caches the name→ID mapping for the lifetime of the client.
+        """
+        if self._field_name_to_id is None:
+            raw_fields = await self.list_custom_fields()
+            self._field_name_to_id = {
+                f["name"]: f["id"] for f in raw_fields if "name" in f and "id" in f
+            }
+            logger.info(
+                "cached_custom_field_ids",
+                count=len(self._field_name_to_id),
+                names=list(self._field_name_to_id.keys()),
+            )
+
+        resolved: dict[str, str] = {}
+        for name, value in fields_by_name.items():
+            field_id = self._field_name_to_id.get(name)
+            if field_id is None:
+                raise ValueError(
+                    f"Custom field '{name}' not found in Apollo. "
+                    f"Available fields: {list(self._field_name_to_id.keys())}"
+                )
+            resolved[field_id] = value
+        return resolved
+
     async def update_contact(
         self, contact_id: str, typed_custom_fields: dict[str, str]
     ) -> Contact:
-        """PATCH /contacts/{id} — update custom fields."""
+        """PATCH /contacts/{id} — update custom fields.
+
+        Accepts field names (e.g. 'ai_email_subject') and resolves them
+        to Apollo field IDs before sending the request.
+        """
+        resolved_fields = await self._resolve_field_ids(typed_custom_fields)
         data = await self._patch(
             f"/contacts/{contact_id}",
-            json={"typed_custom_fields": typed_custom_fields},
+            json={"typed_custom_fields": resolved_fields},
         )
         c = data.get("contact", {})
         return Contact(

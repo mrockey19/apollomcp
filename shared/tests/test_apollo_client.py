@@ -261,6 +261,66 @@ async def test_429_retry(client: ApolloClient) -> None:
 
 
 @respx.mock
+async def test_update_contact_resolves_field_ids(client: ApolloClient) -> None:
+    """update_contact should resolve field names to Apollo field IDs."""
+    respx.get("https://api.apollo.io/api/v1/typed_custom_fields").mock(
+        return_value=Response(
+            200,
+            json={
+                "typed_custom_fields": [
+                    {"id": "tf_abc123", "name": "ai_email_subject"},
+                    {"id": "tf_def456", "name": "ai_email_body"},
+                ]
+            },
+        )
+    )
+    patch_route = respx.patch("https://api.apollo.io/api/v1/contacts/c1").mock(
+        return_value=Response(
+            200,
+            json={
+                "contact": {
+                    "id": "c1",
+                    "email": "jane@acme.com",
+                    "first_name": "Jane",
+                }
+            },
+        )
+    )
+    result = await client.update_contact(
+        "c1",
+        typed_custom_fields={
+            "ai_email_subject": "Test Subject",
+            "ai_email_body": "Test Body",
+        },
+    )
+    assert result.id == "c1"
+    # Verify the PATCH was called with field IDs, not names
+    sent_json = patch_route.calls[0].request.content
+    import json
+
+    body = json.loads(sent_json)
+    assert "tf_abc123" in body["typed_custom_fields"]
+    assert "tf_def456" in body["typed_custom_fields"]
+    assert body["typed_custom_fields"]["tf_abc123"] == "Test Subject"
+    assert body["typed_custom_fields"]["tf_def456"] == "Test Body"
+
+
+@respx.mock
+async def test_update_contact_unknown_field(client: ApolloClient) -> None:
+    """update_contact should raise ValueError for unknown field names."""
+    respx.get("https://api.apollo.io/api/v1/typed_custom_fields").mock(
+        return_value=Response(
+            200,
+            json={"typed_custom_fields": [{"id": "tf_abc123", "name": "ai_email_subject"}]},
+        )
+    )
+    with pytest.raises(ValueError, match="Custom field 'nonexistent' not found"):
+        await client.update_contact(
+            "c1", typed_custom_fields={"nonexistent": "value"}
+        )
+
+
+@respx.mock
 async def test_api_error(client: ApolloClient) -> None:
     respx.post("https://api.apollo.io/api/v1/contacts/search").mock(
         return_value=Response(403, text="Forbidden")

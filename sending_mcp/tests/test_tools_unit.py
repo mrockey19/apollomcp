@@ -16,6 +16,11 @@ from sending_mcp.server import (
 
 def _mock_apollo() -> AsyncMock:
     mock = AsyncMock()
+    mock.list_custom_fields.return_value = [
+        {"id": "field_subject_id", "name": "ai_email_subject"},
+        {"id": "field_body_id", "name": "ai_email_body"},
+    ]
+    mock._field_name_to_id = None
     mock.search_sequences.return_value = [
         Sequence(id="seq1", name="AI Bespoke Send", active=True, num_steps=1)
     ]
